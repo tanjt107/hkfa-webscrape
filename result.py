@@ -25,13 +25,15 @@ class ResultParser:
         ).text
 
     def parse_attendance(self) -> int:
-        return int(
+        attendance = (
             self.soup.select_one(
                 "#mcd > table:nth-child(10) > tr > td > table.tbl > tr:nth-child(2) > td > table > tr > td"
             )
             .text.split(":")[1]
             .strip()
         )
+        if attendance.isnumeric():
+            return int(attendance)
 
     @staticmethod
     def parse_team(team: Tag) -> Team:
@@ -53,17 +55,25 @@ class ResultParser:
         scores = self.soup.select_one(
             "#mcd > table:nth-child(10) > tr > td > table.tbl > tr:nth-child(3) > td > table > tr > td:nth-child(2) > h1"
         ).text.split(":")
-        return {
-            "home": int(scores[0]),
-            "away": int(scores[1]),
-        }
+        if scores != ["-", "-"]:
+            return {
+                "home": int(scores[0]),
+                "away": int(scores[1]),
+            }
 
     @staticmethod
     def parse_player(player: Tag) -> Player:
-        return {
-            "id": int(player["href"].split("=")[-1]),
-            "name": player.text,
-        }
+        if name := player.text.strip():
+            return {
+                "id": int(player["href"].split("=")[-1]),
+                "name": name,
+            }
+
+    def parse_home_goals(self) -> list:
+        return []
+
+    def parse_away_goals(self) -> list:
+        return []
 
     def parse_home_player_with_number(self, player: Tag) -> Player:
         return {
@@ -119,8 +129,8 @@ class ResultParser:
 
     @staticmethod
     def parse_minute(minute: str) -> int:
-        minutes = re.search(r"(\d+)", minute)
-        return int(minutes[0])
+        if minutes := re.search(r"(\d+)", minute):
+            return int(minutes[0])
 
     def parse_card(self, card: Tag, card_type: str, team: str) -> Card:
         return {
@@ -181,13 +191,13 @@ class ResultParser:
         return self.parse_substitutions(players)
 
     def parse_referee(self) -> str:
-        return (
-            self.soup.select_one("#mcd > table:nth-child(11) > tr:nth-child(2) > td")
-            .text.strip()
-            .split("\n")[0]
-            .split(":")[1]
-            .strip()
-        )
+        if referee := self.soup.select_one(
+            "#mcd > table:nth-child(11) > tr:nth-child(2) > td"
+        ):
+            if ":" in referee.text:
+                return referee.text.strip().split("\n")[0].split(":")[1].strip()
+            elif "：" in referee.text:
+                return referee.text.strip().split("\n")[0].split("：")[1].strip()
 
     def parse(self) -> dict:
         return {
@@ -208,11 +218,13 @@ class ResultParser:
                 },
             },
             "events": sorted(
-                self.parse_home_yellow_cards()
+                self.parse_home_goals()
+                + self.parse_away_goals()
+                + self.parse_home_yellow_cards()
                 + self.parse_away_yellow_cards()
                 + self.parse_home_red_cards()
                 + self.parse_away_red_cards(),
-                key=lambda e: e["minute"],
+                key=lambda e: (e["minute"] is None, e["minute"]),
             ),
             "substitution": {
                 "home": self.parse_home_substitutions(),
