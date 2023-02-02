@@ -1,12 +1,18 @@
 import re
 import requests
 from bs4 import BeautifulSoup, Tag
+from enum import Enum
 from typing import Union
 
 Team = dict[str, Union[int, str]]
 Player = dict[str, Union[int, str]]
 Card = dict[str, Union[int, Player, str]]
 Subs = dict[str, Union[int, Player]]
+
+
+class HomeAway(Enum):
+    HOME = 1
+    AWAY = 2
 
 
 class ResultParser:
@@ -61,6 +67,12 @@ class ResultParser:
                 "away": int(scores[1]),
             }
 
+    def parse_shootout_scores(self) -> dict[str, int]:
+        pass
+
+    def parser_shootout_goals(self):
+        pass
+
     @staticmethod
     def parse_player(player: Tag) -> Player:
         if name := player.text.strip():
@@ -69,60 +81,36 @@ class ResultParser:
                 "name": name,
             }
 
-    def parse_home_goals(self) -> list:
+    def parse_goals(self, team: HomeAway) -> list:
         return []
 
-    def parse_away_goals(self) -> list:
-        return []
-
-    def parse_home_player_with_number(self, player: Tag) -> Player:
-        return {
-            "number": int(player.select_one("td:nth-of-type(1)").text),
-            **self.parse_player(player.select_one("td:nth-of-type(2) > a")),
-        }
-
-    def parse_away_player_with_number(self, player: Tag) -> Player:
+    def parse_player_with_number(self, player: Tag, team: HomeAway) -> Player:
+        if team == HomeAway.HOME:
+            return {
+                "number": int(player.select_one("td:nth-of-type(1)").text),
+                **self.parse_player(player.select_one("td:nth-of-type(2) > a")),
+            }
         return {
             "number": int(player.select_one("td:nth-of-type(2)").text),
             **self.parse_player(player.select_one("td:nth-of-type(1) > a")),
         }
 
-    def parse_home_startings(self) -> list[Player]:
+    def parse_startings(self, team: HomeAway) -> list[Player]:
         players = self.soup.select(
-            "#mcd > table:nth-child(10) > tr > td > table:nth-child(2) > tr:nth-child(3) > td > table > tr > td:nth-child(1) > table > tr"
+            f"#mcd > table:nth-child(10) > tr > td > table:nth-child(2) > tr:nth-child(3) > td > table > tr > td:nth-child({team.value}) > table > tr"
         )
         return [
-            self.parse_home_player_with_number(player)
+            self.parse_player_with_number(player, team)
             for player in players
             if player.text.strip()
         ]
 
-    def parse_away_startings(self) -> list[Player]:
+    def parse_substitutes(self, team: HomeAway) -> list[Player]:
         players = self.soup.select(
-            "#mcd > table:nth-child(10) > tr > td > table:nth-child(2) > tr:nth-child(3) > td > table > tr > td:nth-child(2) > table > tr"
+            f"#mcd > table:nth-child(10) > tr:nth-child(3) > td > table > tr > td:nth-child({team.value}) > table > tr"
         )
         return [
-            self.parse_away_player_with_number(player)
-            for player in players
-            if player.text.strip()
-        ]
-
-    def parse_home_substitutes(self) -> list[Player]:
-        players = self.soup.select(
-            "#mcd > table:nth-child(10) > tr:nth-child(3) > td > table > tr > td:nth-child(1) > table > tr"
-        )
-        return [
-            self.parse_home_player_with_number(player)
-            for player in players
-            if player.text.strip()
-        ]
-
-    def parse_away_substitutes(self) -> list[Player]:
-        players = self.soup.select(
-            "#mcd > table:nth-child(10) > tr:nth-child(3) > td > table > tr > td:nth-child(2) > table > tr"
-        )
-        return [
-            self.parse_away_player_with_number(player)
+            self.parse_player_with_number(player, team)
             for player in players
             if player.text.strip()
         ]
@@ -140,31 +128,22 @@ class ResultParser:
             "minute": self.parse_minute(card.next_sibling),
         }
 
-    def parse_home_yellow_cards(self) -> list[Card]:
+    def parse_yellow_cards(self, team: HomeAway) -> list[Card]:
         cards = self.soup.select(
-            "#mcd > table:nth-child(10) > tr:nth-child(7) > td > table > tr > td:nth-child(1) > a"
+            f"#mcd > table:nth-child(10) > tr:nth-child(7) > td > table > tr > td:nth-child({team.value}) > a"
         )
-        return [self.parse_card(card, "Yellow Card", "Home") for card in cards]
+        return [self.parse_card(card, "Yellow Card", team.name) for card in cards]
 
-    def parse_away_yellow_cards(self) -> list[Card]:
+    def parse_red_cards(self, team: HomeAway) -> list[Card]:
         cards = self.soup.select(
-            "#mcd > table:nth-child(10) > tr:nth-child(7) > td > table > tr > td:nth-child(2) > a"
+            f"#mcd > table:nth-child(10) > tr:nth-child(9) > td > table > tr > td:nth-child({team.value}) > a"
         )
-        return [self.parse_card(card, "Yellow Card", "Away") for card in cards]
+        return [self.parse_card(card, "Red Card", team.name) for card in cards]
 
-    def parse_home_red_cards(self) -> list[Card]:
-        cards = self.soup.select(
-            "#mcd > table:nth-child(10) > tr:nth-child(9) > td > table > tr > td:nth-child(1) > a"
+    def parse_substitutions(self, team: HomeAway) -> list[Subs]:
+        players = self.soup.select(
+            f"#mcd > table:nth-child(10) > tr:nth-child(11) > td > table > tr > td:nth-child({team.value}) > a"
         )
-        return [self.parse_card(card, "Red Card", "Home") for card in cards]
-
-    def parse_away_red_cards(self) -> list[Card]:
-        cards = self.soup.select(
-            "#mcd > table:nth-child(10) > tr:nth-child(9) > td > table > tr > td:nth-child(2) > a"
-        )
-        return [self.parse_card(card, "Red Card", "Away") for card in cards]
-
-    def parse_substitutions(self, players) -> Subs:
         subs = []
         for i in range(len(players) // 2):
             first: Tag = players[2 * i]
@@ -177,18 +156,6 @@ class ResultParser:
                 }
             )
         return subs
-
-    def parse_home_substitutions(self) -> list[Subs]:
-        players = self.soup.select(
-            "#mcd > table:nth-child(10) > tr:nth-child(11) > td > table > tr > td:nth-child(1) > a"
-        )
-        return self.parse_substitutions(players)
-
-    def parse_away_substitutions(self) -> list[Subs]:
-        players = self.soup.select(
-            "#mcd > table:nth-child(10) > tr:nth-child(11) > td > table > tr > td:nth-child(2) > a"
-        )
-        return self.parse_substitutions(players)
 
     def parse_referee(self) -> str:
         if referee := self.soup.select_one(
@@ -209,28 +176,29 @@ class ResultParser:
             "attendance": self.parse_attendance(),
             "lineup": {
                 "home": {
-                    "starting": self.parse_home_startings(),
-                    "substitute": self.parse_home_substitutes(),
+                    "starting": self.parse_startings(HomeAway.HOME),
+                    "substitute": self.parse_substitutes(HomeAway.HOME),
                 },
                 "away": {
-                    "starting": self.parse_away_startings(),
-                    "substitute": self.parse_away_substitutes(),
+                    "starting": self.parse_startings(HomeAway.AWAY),
+                    "substitute": self.parse_substitutes(HomeAway.AWAY),
                 },
             },
             "events": sorted(
-                self.parse_home_goals()
-                + self.parse_away_goals()
-                + self.parse_home_yellow_cards()
-                + self.parse_away_yellow_cards()
-                + self.parse_home_red_cards()
-                + self.parse_away_red_cards(),
+                self.parse_goals(HomeAway.HOME)
+                + self.parse_goals(HomeAway.AWAY)
+                + self.parse_yellow_cards(HomeAway.HOME)
+                + self.parse_yellow_cards(HomeAway.AWAY)
+                + self.parse_red_cards(HomeAway.HOME)
+                + self.parse_red_cards(HomeAway.AWAY),
                 key=lambda e: (e["minute"] is None, e["minute"]),
             ),
-            "substitution": {
-                "home": self.parse_home_substitutions(),
-                "away": self.parse_away_substitutions(),
+            "substitutions": {
+                "home": self.parse_substitutions(HomeAway.HOME),
+                "away": self.parse_substitutions(HomeAway.AWAY),
             },
             "referee": self.parse_referee(),
+            "shootout": {},
         }
 
 
