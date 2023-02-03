@@ -14,9 +14,13 @@ DATE_SELECTOR = "#mcd > table:nth-child(10) > tr > td > table.tbl > tr:nth-child
 ATTENDANCE_SELECTOR = "#mcd > table:nth-child(10) > tr > td > table.tbl > tr:nth-child(2) > td > table > tr > td"
 TEAM_SELECTOR = "#mcd > table:nth-child(10) > tr > td > table.tbl > tr:nth-child(3) > td > table > tr > td:nth-child({}) > h2 > a"
 SCORES_SELECTOR = "#mcd > table:nth-child(10) > tr > td > table.tbl > tr:nth-child(3) > td > table > tr > td:nth-child(2) > h1"
+SCORING_PLAYERS_SELECTOR = "#mcd > table:nth-child(10) > tr > td > table.tbl > tr:nth-child(4) > td > table > tr:nth-child(1) > td:nth-child({}) > span > a"
+SHOOTOUT_SCORES_SELECTOR = "#mcd > table:nth-child(10) > tr > td > table.tbl > tr:nth-child(4) > td > table > tr:nth-child(3) > td > center > h2"
+SHOOTOUT_SCORING_PLAYER_SELECTOR = "#mcd > table:nth-child(10) > tr > td > table.tbl > tr:nth-child(4) > td > table > tr:nth-child(4) > td:nth-child({}) > a"
 STARTING_SELECTOR = "#mcd > table:nth-child(10) > tr > td > table:nth-child(2) > tr:nth-child(3) > td > table > tr > td:nth-child({}) > table > tr"
 SUBSTITUTES_SELETOR = "#mcd > table:nth-child(10) > tr:nth-child(3) > td > table > tr > td:nth-child({}) > table > tr"
 EVENT_SELECTOR = "#mcd > table:nth-child(10) > tr:nth-child({}) > td > table > tr > td:nth-child({}) > a"
+REFEREE_SELECTOR = "#mcd > table:nth-child(11) > tr:nth-child(2) > td"
 
 
 class HomeAway(Enum):
@@ -52,19 +56,36 @@ class ResultParser:
         team = self.soup.select_one(TEAM_SELECTOR.format(team.value * 2 - 1))
         return {"id": int(team["href"].split("/")[2]), "name": team.text}
 
-    def parse_scores(self) -> dict[str, int]:
-        scores = self.soup.select_one(SCORES_SELECTOR).text.split(":")
+    @staticmethod
+    def parse_scores(scores: Tag) -> dict[str, int]:
+        scores = scores.text.split(":")
         if scores != ["-", "-"]:
             return {
                 "home": int(scores[0]),
                 "away": int(scores[1]),
             }
 
-    def parse_shootout_scores(self) -> dict[str, int]:
-        pass
+    def parse_full_time_scores(self) -> dict[str, int]:
+        scores = self.soup.select_one(SCORES_SELECTOR)
+        return self.parse_scores(scores)
 
-    def parser_shootout_goals(self):
-        pass
+    def parse_shootout_scores(self) -> dict[str, int]:
+        scores = self.soup.select_one(SHOOTOUT_SCORES_SELECTOR)
+        return self.parse_scores(scores)
+
+    def parse_shootout_goals(self, team: HomeAway):
+        players = self.soup.select(SHOOTOUT_SCORING_PLAYER_SELECTOR.format(team.value))
+        return [self.parse_player(player) for player in players]
+
+    def parse_shootout(self):
+        if (scores := self.parse_shootout_scores()) != {"home": 0, "away": 0}:
+            return {
+                "scores": scores,
+                "goals": {
+                    "home": self.parse_shootout_goals(HomeAway.HOME),
+                    "away": self.parse_shootout_goals(HomeAway.AWAY),
+                },
+            }
 
     @staticmethod
     def parse_player(player: Tag) -> Player:
@@ -74,18 +95,28 @@ class ResultParser:
                 "name": name,
             }
 
-    def parse_goals(self, team: HomeAway) -> list:
-        return []
+    @staticmethod
+    def parse_minute(minute: str) -> int:
+        if minutes := re.search(r"(\d+)", minute):
+            return int(minutes[0])
+
+    def parse_scoring_players(self, team: HomeAway) -> list:
+        players = self.soup.select(SCORING_PLAYERS_SELECTOR.format(team.value))
+        return [
+            {
+                "event": "Goal",
+                "player": self.parse_player(player),
+                "minute": self.parse_minute(player.next_sibling.text.strip()),
+            }
+            for player in players
+        ]
 
     def parse_player_with_number(self, player: Tag, team: HomeAway) -> Player:
-        if team == HomeAway.HOME:
-            return {
-                "number": int(player.select_one("td:nth-of-type(1)").text),
-                **self.parse_player(player.select_one("td:nth-of-type(2) > a")),
-            }
         return {
-            "number": int(player.select_one("td:nth-of-type(2)").text),
-            **self.parse_player(player.select_one("td:nth-of-type(1) > a")),
+            "number": int(player.select_one(f"td:nth-of-type({team.value})").text),
+            **self.parse_player(
+                player.select_one(f"td:nth-of-type({3-team.value}) > a")
+            ),
         }
 
     def parse_startings(self, team: HomeAway) -> list[Player]:
@@ -103,11 +134,6 @@ class ResultParser:
             for player in players
             if player.text.strip()
         ]
-
-    @staticmethod
-    def parse_minute(minute: str) -> int:
-        if minutes := re.search(r"(\d+)", minute):
-            return int(minutes[0])
 
     def parse_cards(self, card_type: Event, team: HomeAway) -> list[Card]:
         cards = self.soup.select(EVENT_SELECTOR.format(card_type.value, team.value))
@@ -139,9 +165,7 @@ class ResultParser:
         return subs
 
     def parse_referee(self) -> str:
-        if referee := self.soup.select_one(
-            "#mcd > table:nth-child(11) > tr:nth-child(2) > td"
-        ):
+        if referee := self.soup.select_one(REFEREE_SELECTOR):
             if ":" in referee.text:
                 return referee.text.strip().split("\n")[0].split(":")[1].strip()
             elif "：" in referee.text:
@@ -153,7 +177,7 @@ class ResultParser:
             "date": self.parse_date(),
             "home": self.parse_team(HomeAway.HOME),
             "away": self.parse_team(HomeAway.AWAY),
-            "scores": self.parse_scores(),
+            "scores": self.parse_full_time_scores(),
             "attendance": self.parse_attendance(),
             "lineup": {
                 "home": {
@@ -166,8 +190,8 @@ class ResultParser:
                 },
             },
             "events": sorted(
-                self.parse_goals(HomeAway.HOME)
-                + self.parse_goals(HomeAway.AWAY)
+                self.parse_scoring_players(HomeAway.HOME)
+                + self.parse_scoring_players(HomeAway.AWAY)
                 + self.parse_cards(Event.YELLOW_CARD, HomeAway.HOME)
                 + self.parse_cards(Event.YELLOW_CARD, HomeAway.AWAY)
                 + self.parse_cards(Event.RED_CARD, HomeAway.HOME)
@@ -179,7 +203,7 @@ class ResultParser:
                 "away": self.parse_substitutions(HomeAway.AWAY),
             },
             "referee": self.parse_referee(),
-            "shootout": {},
+            "shootout": self.parse_shootout(),
         }
 
 
@@ -187,6 +211,3 @@ def get_result(id):
     url = f"https://www.hkfa.com/ch/match/detail/{id}"
     response = requests.get(url)
     return {"id": id, **ResultParser(response.text).parse()}
-
-
-print(get_result(36789))
