@@ -9,10 +9,25 @@ Player = dict[str, Union[int, str]]
 Card = dict[str, Union[int, Player, str]]
 Subs = dict[str, Union[int, Player]]
 
+LEAGUE_SELECTOR = "#mcd > table:nth-child(10) > tr > td > table.tbl > tr:nth-child(1) > td > table > tr > td:nth-child(1) > h2"
+DATE_SELECTOR = "#mcd > table:nth-child(10) > tr > td > table.tbl > tr:nth-child(1) > td > table > tr > td:nth-child(2) > h3"
+ATTENDANCE_SELECTOR = "#mcd > table:nth-child(10) > tr > td > table.tbl > tr:nth-child(2) > td > table > tr > td"
+TEAM_SELECTOR = "#mcd > table:nth-child(10) > tr > td > table.tbl > tr:nth-child(3) > td > table > tr > td:nth-child({}) > h2 > a"
+SCORES_SELECTOR = "#mcd > table:nth-child(10) > tr > td > table.tbl > tr:nth-child(3) > td > table > tr > td:nth-child(2) > h1"
+STARTING_SELECTOR = "#mcd > table:nth-child(10) > tr > td > table:nth-child(2) > tr:nth-child(3) > td > table > tr > td:nth-child({}) > table > tr"
+SUBSTITUTES_SELETOR = "#mcd > table:nth-child(10) > tr:nth-child(3) > td > table > tr > td:nth-child({}) > table > tr"
+EVENT_SELECTOR = "#mcd > table:nth-child(10) > tr:nth-child({}) > td > table > tr > td:nth-child({}) > a"
+
 
 class HomeAway(Enum):
     HOME = 1
     AWAY = 2
+
+
+class Event(Enum):
+    YELLOW_CARD = 7
+    RED_CARD = 9
+    SUBSTITUTION = 11
 
 
 class ResultParser:
@@ -21,46 +36,24 @@ class ResultParser:
         self.soup = BeautifulSoup(self.html, "html.parser")
 
     def parse_league_name(self) -> str:
-        return self.soup.select_one(
-            "#mcd > table:nth-child(10) > tr > td > table.tbl > tr:nth-child(1) > td > table > tr > td:nth-child(1) > h2"
-        ).text
+        return self.soup.select_one(LEAGUE_SELECTOR).text
 
     def parse_date(self) -> str:
-        return self.soup.select_one(
-            "#mcd > table:nth-child(10) > tr > td > table.tbl > tr:nth-child(1) > td > table > tr > td:nth-child(2) > h3"
-        ).text
+        return self.soup.select_one(DATE_SELECTOR).text
 
     def parse_attendance(self) -> int:
         attendance = (
-            self.soup.select_one(
-                "#mcd > table:nth-child(10) > tr > td > table.tbl > tr:nth-child(2) > td > table > tr > td"
-            )
-            .text.split(":")[1]
-            .strip()
+            self.soup.select_one(ATTENDANCE_SELECTOR).text.split(":")[1].strip()
         )
         if attendance.isnumeric():
             return int(attendance)
 
-    @staticmethod
-    def parse_team(team: Tag) -> Team:
+    def parse_team(self, team: HomeAway) -> Team:
+        team = self.soup.select_one(TEAM_SELECTOR.format(team.value * 2 - 1))
         return {"id": int(team["href"].split("/")[2]), "name": team.text}
 
-    def parse_home_team(self) -> Team:
-        team = self.soup.select_one(
-            "#mcd > table:nth-child(10) > tr > td > table.tbl > tr:nth-child(3) > td > table > tr > td:nth-child(1) > h2 > a"
-        )
-        return self.parse_team(team)
-
-    def parse_away_team(self) -> Team:
-        team = self.soup.select_one(
-            "#mcd > table:nth-child(10) > tr > td > table.tbl > tr:nth-child(3) > td > table > tr > td:nth-child(3) > h2 > a"
-        )
-        return self.parse_team(team)
-
     def parse_scores(self) -> dict[str, int]:
-        scores = self.soup.select_one(
-            "#mcd > table:nth-child(10) > tr > td > table.tbl > tr:nth-child(3) > td > table > tr > td:nth-child(2) > h1"
-        ).text.split(":")
+        scores = self.soup.select_one(SCORES_SELECTOR).text.split(":")
         if scores != ["-", "-"]:
             return {
                 "home": int(scores[0]),
@@ -96,9 +89,7 @@ class ResultParser:
         }
 
     def parse_startings(self, team: HomeAway) -> list[Player]:
-        players = self.soup.select(
-            f"#mcd > table:nth-child(10) > tr > td > table:nth-child(2) > tr:nth-child(3) > td > table > tr > td:nth-child({team.value}) > table > tr"
-        )
+        players = self.soup.select(STARTING_SELECTOR.format(team.value))
         return [
             self.parse_player_with_number(player, team)
             for player in players
@@ -106,9 +97,7 @@ class ResultParser:
         ]
 
     def parse_substitutes(self, team: HomeAway) -> list[Player]:
-        players = self.soup.select(
-            f"#mcd > table:nth-child(10) > tr:nth-child(3) > td > table > tr > td:nth-child({team.value}) > table > tr"
-        )
+        players = self.soup.select(SUBSTITUTES_SELETOR.format(team.value))
         return [
             self.parse_player_with_number(player, team)
             for player in players
@@ -120,29 +109,21 @@ class ResultParser:
         if minutes := re.search(r"(\d+)", minute):
             return int(minutes[0])
 
-    def parse_card(self, card: Tag, card_type: str, team: str) -> Card:
-        return {
-            "event": card_type,
-            "team": team,
-            "player": self.parse_player(card),
-            "minute": self.parse_minute(card.next_sibling),
-        }
-
-    def parse_yellow_cards(self, team: HomeAway) -> list[Card]:
-        cards = self.soup.select(
-            f"#mcd > table:nth-child(10) > tr:nth-child(7) > td > table > tr > td:nth-child({team.value}) > a"
-        )
-        return [self.parse_card(card, "Yellow Card", team.name) for card in cards]
-
-    def parse_red_cards(self, team: HomeAway) -> list[Card]:
-        cards = self.soup.select(
-            f"#mcd > table:nth-child(10) > tr:nth-child(9) > td > table > tr > td:nth-child({team.value}) > a"
-        )
-        return [self.parse_card(card, "Red Card", team.name) for card in cards]
+    def parse_cards(self, card_type: Event, team: HomeAway) -> list[Card]:
+        cards = self.soup.select(EVENT_SELECTOR.format(card_type.value, team.value))
+        return [
+            {
+                "event": " ".join(card_type.name.split("_")).title(),
+                "team": team.name.title(),
+                "player": self.parse_player(card),
+                "minute": self.parse_minute(card.next_sibling),
+            }
+            for card in cards
+        ]
 
     def parse_substitutions(self, team: HomeAway) -> list[Subs]:
         players = self.soup.select(
-            f"#mcd > table:nth-child(10) > tr:nth-child(11) > td > table > tr > td:nth-child({team.value}) > a"
+            EVENT_SELECTOR.format(Event.SUBSTITUTION.value, team.value)
         )
         subs = []
         for i in range(len(players) // 2):
@@ -170,27 +151,27 @@ class ResultParser:
         return {
             "league": self.parse_league_name(),
             "date": self.parse_date(),
-            "home": self.parse_home_team(),
-            "away": self.parse_away_team(),
+            "home": self.parse_team(HomeAway.HOME),
+            "away": self.parse_team(HomeAway.AWAY),
             "scores": self.parse_scores(),
             "attendance": self.parse_attendance(),
             "lineup": {
                 "home": {
                     "starting": self.parse_startings(HomeAway.HOME),
-                    "substitute": self.parse_substitutes(HomeAway.HOME),
+                    "substitutes": self.parse_substitutes(HomeAway.HOME),
                 },
                 "away": {
                     "starting": self.parse_startings(HomeAway.AWAY),
-                    "substitute": self.parse_substitutes(HomeAway.AWAY),
+                    "substitutes": self.parse_substitutes(HomeAway.AWAY),
                 },
             },
             "events": sorted(
                 self.parse_goals(HomeAway.HOME)
                 + self.parse_goals(HomeAway.AWAY)
-                + self.parse_yellow_cards(HomeAway.HOME)
-                + self.parse_yellow_cards(HomeAway.AWAY)
-                + self.parse_red_cards(HomeAway.HOME)
-                + self.parse_red_cards(HomeAway.AWAY),
+                + self.parse_cards(Event.YELLOW_CARD, HomeAway.HOME)
+                + self.parse_cards(Event.YELLOW_CARD, HomeAway.AWAY)
+                + self.parse_cards(Event.RED_CARD, HomeAway.HOME)
+                + self.parse_cards(Event.RED_CARD, HomeAway.AWAY),
                 key=lambda e: (e["minute"] is None, e["minute"]),
             ),
             "substitutions": {
@@ -206,3 +187,6 @@ def get_result(id):
     url = f"https://www.hkfa.com/ch/match/detail/{id}"
     response = requests.get(url)
     return {"id": id, **ResultParser(response.text).parse()}
+
+
+print(get_result(36789))
